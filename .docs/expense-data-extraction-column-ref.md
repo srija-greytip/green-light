@@ -246,72 +246,36 @@ Every column below is traced to its source table/column or JSONB path in the pen
 | **Column**  | **Source**                                                         | **What it is**                                                                                                                                                                                                                                                                             |
 | ----------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | item_pk     | expense_report_item.id                                             | Internal numeric primary key of the claim line item.                                                                                                                                                                                                                                       |
-| ---         | ---                                                                | ---                                                                                                                                                                                                                                                                                        |
-| item_id     | expense_report_item.item_id                                        | Human-readable claim ID, format {categoryCode}-{sequence} (e.g. LD-1). Unique.                                                                                                                                                                                                             |
-| ---         | ---                                                                | ---                                                                                                                                                                                                                                                                                        |
 | report_pk   | expense_report_item.expense_report_id                              | FK to the parent expense report's internal id.                                                                                                                                                                                                                                             |
-| ---         | ---                                                                | ---                                                                                                                                                                                                                                                                                        |
 | employee_id | expense_report_item.employee_id **and** expense_report.employee_id | The claimant. **Both are selected in this query (once via the item, once via the report) and share the same underlying column name** - if loaded into pandas the second one will auto-suffix to employee_id.1. They should always be identical; drop one if that duplication is a problem. |
-| ---         | ---                                                                | ---                                                                                                                                                                                                                                                                                        |
 | report_id   | expense_report.report_id                                           | Human-readable report ID, format EXP-{id}.                                                                                                                                                                                                                                                 |
-| ---         | ---                                                                | ---                                                                                                                                                                                                                                                                                        |
 
 ## Claim category
 
 | **Column**            | **Source**                                                   | **What it is**                                                   |
 | --------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
-| expense_type_name     | expense_type.name (via expense_report_item.expense_type_id)  | Specific expense type (e.g. "Client Lunch", "Airfare").          |
-| ---                   | ---                                                          | ---                                                              |
-| expense_category_name | expense_category.name (via expense_type.expense_category_id) | Parent category grouping expense types (e.g. "Travel", "Meals"). |
-| ---                   | ---                                                          | ---                                                              |
-| expense_category_code | expense_category.code                                        | Short code for the category.                                     |
-| ---                   | ---                                                          | ---                                                              |
+| expense_category_id   | expense_category.id                                            |                                     |
+| expense_type_id       | expense_type.id                                                 | ---                                                              |
 
 ## Claim amounts
 
 | **Column**            | **Source**                                | **What it is**                                                                                                                        |
 | --------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | bill_number           | expense_report_item.bill_number           | Receipt/bill number as entered by the claimant.                                                                                       |
-| ---                   | ---                                       | ---                                                                                                                                   |
 | bill_date             | expense_report_item.bill_date             | Date on the receipt.                                                                                                                  |
-| ---                   | ---                                       | ---                                                                                                                                   |
 | bill_amount           | expense_report_item.bill_amount           | Original claimed amount, in the bill's own currency.                                                                                  |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| tax_amount            | expense_report_item.tax_amount            | Tax portion of the bill amount.                                                                                                       |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| amount_before_tax     | expense_report_item.amount_before_tax     | Bill amount minus tax.                                                                                                                |
-| ---                   | ---                                       | ---                                                                                                                                   |
 | bill_currency_id      | expense_report_item.bill_currency_id      | Currency the expense was actually incurred in.                                                                                        |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| payout_currency_id    | expense_report_item.payout_currency_id    | Currency the employee is reimbursed in (may differ from bill currency for cross-border claims).                                       |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| exchange_rate         | expense_report_item.exchange_rate         | Bill-to-payout conversion rate. **Contract**: 0 or negative means forex was invalid/missing at the time - don't treat 0 as "free."    |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| payout_amount         | expense_report_item.payout_amount         | Final reimbursed amount in payout currency: (overridden or bill amount) × exchange_rate.                                              |
-| ---                   | ---                                       | ---                                                                                                                                   |
 | overridden_amount     | expense_report_item.overridden_amount     | If a reviewer manually changed the claimed amount, the new value. Null if never overridden.                                           |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| overridden_tax_amount | expense_report_item.overridden_tax_amount | Same, for the tax portion.                                                                                                            |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| overridden_reason     | expense_report_item.overridden_reason     | Free-text reason a reviewer gave for the override.                                                                                    |
-| ---                   | ---                                       | ---                                                                                                                                   |
-| has_attachment        | Derived: attachment_id IS NOT NULL        | Whether a receipt/attachment was uploaded with the claim. Cheap fraud-adjacent signal (claims above policy limits often require one). |
-| ---                   | ---                                       | ---                                                                                                                                   |
 
 ## Mileage detail (null for non-mileage claims)
 
 | **Column**                     | **Source**                                  | **What it is**                                              |
 | ------------------------------ | ------------------------------------------- | ----------------------------------------------------------- |
 | mileage_unit                   | expense_report_item.mileage_info ->> 'unit' | Distance unit (km/miles), from the mileage_info JSONB blob. |
-| ---                            | ---                                         | ---                                                         |
 | mileage_quantity               | mileage_info ->> 'quantity'                 | Distance claimed.                                           |
-| ---                            | ---                                         | ---                                                         |
 | mileage_rate_per_unit          | mileage_info ->> 'ratePerUnit'              | Rate applied per unit of distance.                          |
-| ---                            | ---                                         | ---                                                         |
 | mileage_original_rate_per_unit | mileage_info ->> 'originalRatePerUnit'      | Rate before any override - lets you spot rate manipulation. |
-| ---                            | ---                                         | ---                                                         |
 | mileage_overridden_quantity    | mileage_info ->> 'overriddenQuantity'       | Distance value if a reviewer overrode it.                   |
-| ---                            | ---                                         | ---                                                         |
 
 ## Outcome labels (what the scorer is back-tested against)
 
@@ -346,19 +310,11 @@ Limits can be configured **either per expense type or per category** (never both
 | **Column**         | **What it is**                                                                                                                                                                                                                                       |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | limit_per_claim    | Max amount allowed for a single claim under this policy/currency.                                                                                                                                                                                    |
-| ---                | ---                                                                                                                                                                                                                                                  |
 | limit_per_day      | Max cumulative amount allowed per day.                                                                                                                                                                                                               |
-| ---                | ---                                                                                                                                                                                                                                                  |
 | limit_per_month    | Max cumulative amount allowed per month.                                                                                                                                                                                                             |
-| ---                | ---                                                                                                                                                                                                                                                  |
 | limit_per_quarter  | Max cumulative amount allowed per quarter.                                                                                                                                                                                                           |
-| ---                | ---                                                                                                                                                                                                                                                  |
 | limit_per_year     | Max cumulative amount allowed per year.                                                                                                                                                                                                              |
-| ---                | ---                                                                                                                                                                                                                                                  |
-| allow_beyond_limit | Whether exceeding the limit is even permitted (with justification) vs. hard-blocked. Has no per-currency variant - always comes from the flat field.                                                                                                 |
-| ---                | ---                                                                                                                                                                                                                                                  |
-| limit_scope        | Diagnostic: TYPE_CURRENCY_MATCHED, CATEGORY_CURRENCY_MATCHED, TYPE_FLAT_FALLBACK, or CATEGORY_FLAT_FALLBACK - tells you which of the four resolution paths produced the limit values above. Null means no limit action existed on this claim at all. |
-| ---                | ---                                                                                                                                                                                                                                                  |
+| allow_beyond_limit | Whether exceeding the limit is even permitted (with justification) vs. hard-blocked. Has no per-currency variant - always comes from the flat field. |
 
 ## Frequency snapshot
 
@@ -367,9 +323,7 @@ Lives on a **different action entirely** (expense.restriction.type) from the lim
 | **Column**                                       | **What it is**                                                                     |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | frequency_per_day / \_month / \_quarter / \_year | Max number of claims (count, not amount) allowed in that period under this policy. |
-| ---                                              | ---                                                                                |
 | allow_beyond_frequency                           | Whether exceeding the frequency cap is permitted.                                  |
-| ---                                              | ---                                                                                |
 
 ## Reviewer / workflow configuration
 
@@ -377,19 +331,14 @@ Flattened from the platform.workflow.reviewers action's workflowConfig object (W
 
 | **Column**                | **What it is**                                                                                                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| configured_reviewer_chain | The reviewer levels configured for this policy, collapsed into one string ordered by level, e.g. "Manager > HR > Finance". Built from the reviewers array's wfReviewerTypeName field. |
-| ---                       | ---                                                                                                                                                                                   |
+| configured_reviewer_chain | The reviewer levels configured for this policy, collapsed into one id ordered by user id, e.g. "12 > 234 > 123". Built from the reviewers array's wfReviewerTypeName field. |
 | configured_reviewer_count | How many reviewer levels are configured. This query filters to > 0, i.e. excludes claims with no reviewer chain configured at all (fully automatic policies with nothing to review).  |
-| ---                       | ---                                                                                                                                                                                   |
 
 ## Item-level remarks (Penex's own convenience cache - see caveat below)
 
 | **Column**           | **Source**                           | **What it is**                                                             |
 | -------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
-| latest_remark        | expense_report_item.remarks          | Free-text field holding the most recent remark only.                       |
-| ---                  | ---                                  | ---                                                                        |
 | remark_count         | jsonb_array_length(remarks_history)  | How many remarks exist in the item's own history array.                    |
-| ---                  | ---                                  | ---                                                                        |
 | last_workflow_action | remarks_history\[-1\].workflowAction | Action tied to the latest remark: ACCEPT / FORWARD / REJECT / AUTO_REJECT. |
 | ---                  | ---                                  | ---                                                                        |
 | last_review_level    | remarks_history\[-1\].reviewLevel    | Which reviewer level made the latest remark.                               |
@@ -398,7 +347,6 @@ Flattened from the platform.workflow.reviewers action's workflowConfig object (W
 | ---                  | ---                                  | ---                                                                        |
 | first_remark_at      | remarks_history\[0\].timestamp       | Timestamp of the first remark (start of the review thread).                |
 | ---                  | ---                                  | ---                                                                        |
-| report_level_remark  | expense_report.remarks               | Free-text remark at the report (not item) level.                           |
 | ---                  | ---                                  | ---                                                                        |
 
 **Caveat**: remarks_history is Penex's own app-level echo (ExpenseReportItem.addRemarkToHistory()), not the canonical audit trail - see next section.
