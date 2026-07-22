@@ -2,10 +2,6 @@
 
 Three CSVs in `data/synthetic/`
 
-> **What these can and cannot show.** The rejection rates below are ones *I authored* — they validate that the pipeline and scorer behave correctly on known patterns. They are **not** evidence about real-world approval behaviour, and no threshold recommendation should ever be drawn from them.
-
-> **Correction note.** An earlier version of this document's grain-finding section (§5) used a methodology that pooled claims across *all employees* rather than testing one employee's own profile — which isn't what the real scorer computes. That section has been rebuilt using the correct per-employee methodology. The finding survives, but is smaller and more specific than first stated. See §5 for the full account.
-
 ---
 
 **Strict at MBU** — Highly conservative policy. Only claims that follow the employee's historical precedent are approved. Any deviation or unfamiliar claim is automatically rejected, making approvals rare and more meaningful indicators of "in-pattern" spending.
