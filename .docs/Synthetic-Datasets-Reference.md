@@ -132,7 +132,7 @@ Pairs with ≥3 clean approvals (the `MIN_PRIOR_APPROVALS` gate — tunable, not
 
 Eligibility rate holds in a tight 61–77% band across company sizes; the highvolume dataset's much deeper history pushes it to the top of that range, as expected.
 
-### The grain finding — rebuilt on the correct methodology
+### The grain finding 
 
 **What was wrong before:** earlier versions of this test compared *company-wide, all-employees-pooled* type distributions against *company-wide, all-employees-pooled* category distributions. That's not what the scorer computes — `build_profiles()` groups by `(employee_id, category)`, strictly per person. The pooled version was measuring between-employee variance (different people have different centres), which inflated the apparent effect enormously and isn't a grain question at all.
 
@@ -175,7 +175,7 @@ Their own Books normal is ₹715. A claim at ₹1,430 is a 20-sigma anomaly agai
 
 ## 6. Planted defects
 
-`data/six_datasets/planted_{policy}_{bu}.json` lists the exact `item_id`s carrying each defect:
+`data/raw/planted_{policy}_{bu}.json` lists the exact `item_id`s carrying each defect:
 
 | Dataset | Duplicates | Overrides |
 |---|---:|---:|
@@ -199,4 +199,3 @@ Both scale roughly with row count, as expected — the highvolume dataset has ~2
 4. **SBU doesn't guarantee full type coverage** (§1) — a real property of small companies, not a generation bug.
 5. **Auto-approval rate is uncontrolled across datasets** (§2) — accepted as harmless since the column is exclusion-only, never a feature.
 6. **Peer/role features remain impossible** — no role, grade, department or location exists in the source schema, so none is generated.
-7. **The `z@type = 20.0` value recurring throughout §5 is not a coincidence** — it's the spread floor (`SPREAD_FLOOR_PCT = 0.05` in `config.py`) engaging for employees whose natural type-level spread is tighter than 5% of their centre. This is expected behaviour (it's what prevents divide-by-zero for very steady claimants), not an artifact of the grain test specifically — but worth knowing so the repeated exact value doesn't look like a bug when read out of context.
