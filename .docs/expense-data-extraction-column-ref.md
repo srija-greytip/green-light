@@ -11,8 +11,7 @@ SELECT
     er.employee_id,
 
     -- Claim category
-    et.name                              AS expense_type_name,
-    ec.name                              AS expense_category_name,
+    et.id                              AS expense_type_id,
     ec.code                              AS expense_category_code,
     -- Claim amounts
     eri.bill_number,
@@ -187,8 +186,7 @@ Every column below is traced to its source table/column or JSONB path in the pen
 
 | Column | Source | What it is |
 | --- | --- | --- |
-| expense_type_name | expense_type.name | Display name of the expense type on the line item. |
-| expense_category_name | expense_category.name | Category name (parent of the type). |
+| expense_type_id | expense_type.id | Internal numeric primary key of the expense type. |
 | expense_category_code | expense_category.code | Stable category code. |
 
 ### Claim amounts
