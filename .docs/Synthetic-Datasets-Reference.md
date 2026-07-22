@@ -1,6 +1,6 @@
 # Synthetic Datasets Reference
 
-Three CSVs in `data/synthetic/`
+6 CSVs in `data/raw/`
 
 ---
 
