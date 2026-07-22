@@ -410,6 +410,9 @@ bootstrap CIs on leakage                         # numpy resampling
 | LLM (later) | google-generativeai |
 
 ---
+## ACTUAL IMPLEMENTATION
+
+All work below runs against seven synthetic datasets, not real claims. Six form a policy × company-size grid — three approval strictness levels (strict / regular / lenient) crossed with three company sizes (SBU 10 employees / MBU 25 / LBU 50) — plus a seventh, regular_mbu_highvolume, a deliberately dense stress case (75 employees, 5-year history) built to test the pipeline under far deeper per-employee precedent than a normal-sized company produces. All seven share one 47-column schema, matching the real extraction query and data dictionary.
 
 ## 3. Stage 1 — Extraction & Preparation
 
@@ -435,11 +438,70 @@ Two refinements the schema forces:
 
 ### 3.3 Load With Explicit Types
 
-Never let pandas infer.
-
 | Column | Cast | Why |
 |---|---|---|
 | `bill_number` | string | `int64` drops leading zeros → breaks any bill matching |
 | `expense_category_code` | category | grouping key, low cardinality |
 | `bill_date`, `submission_date`, `approval_date`, `rejection_date`, `last_overridden_at` | datetime, `errors="coerce"` | bad dates → `NaT`, counted not thrown |
 | `employee_id` | int | selected twice in the SQL (item + report) → in the CSV export this surfaces as `employee_id-2`, confirmed identical to `employee_id`; dropped |
+
+### 3.4 Derived fields
+Beyond the label, four more fields computed once per dataset:
+
+```python
+df["submit_lag_days"] = (df["submission_date"] - df["bill_date"]).dt.days
+df["bill_period"] = df["bill_date"].dt.to_period("M")
+df["is_mileage"] = df["mileage_quantity"].notna()
+df["is_clean_approval"] = (
+    df["is_approved"]
+    & (df["auto_approved"] != True)
+    & (df["override_count"].fillna(0) == 0)
+)
+```
+
+### 3.5 Structural checks *(added during implementation — not in the original plan)*
+ 
+Two checks were added once the seven-dataset structure existed.
+
+**Multi-item report safety.** For every dataset, checked whether any report contains items with different outcomes (some accepted, some rejected within the same report). Confirmed real across all seven — each dataset has 90–120+ reports with mixed outcomes — which is what makes per-item labelling safe: a rejection on one item does not blanket the others in the same report.
+
+
+```python
+pairs_type = clean.groupby(
+    ["employee_id", "expense_category_code", "expense_type_name"], observed=True
+).size()
+pairs_cat = clean.groupby(
+    ["employee_id", "expense_category_code"], observed=True
+).size()
+```
+ 
+Also added: a `CATEGORY_NAMES` lookup built dynamically from the data itself (never hardcoded, so it can't drift out of sync) so eligibility tables show `MED (Medical)` rather than a bare code.
+
+### 3.6 Data profiling — `ydata-profiling` *(executed)*
+ 
+Run once cast (§3.3) and derived fields (§3.4) existed, so the report covers everything — not raw strings.
+ 
+```python
+from ydata_profiling import ProfileReport
+ 
+profile = ProfileReport(
+    combined, minimal=True,
+    title="EC-1062 Synthetic Claims — All Seven Datasets"
+)
+profile.to_file("reports/synthetic_all_seven_profile.html")
+```
+
+**One combined report** (all seven, tagged by `dataset`) plus **one dedicated deep-dive** on `regular_mbu_highvolume` specifically, given its size and depth relative to the other six:
+ 
+```python
+ProfileReport(FINAL["regular_mbu_highvolume"], minimal=True,
+              title="regular_mbu_highvolume").to_file(
+    "reports/regular_mbu_highvolume_profile.html")
+```
+
+*What this step is for, and what it isn't.** `ydata-profiling` produces a browsable HTML report — null rates, cardinality, distribution shapes, per-column summaries — meant for a human to skim and catch something obviously wrong (a column that's mostly empty, a category that's dominating unexpectedly) before building anything on top of the data. **It is not the source of any specific finding documented in this project.** Every quantitative result reported elsewhere — the eligibility rates in §3.5, the mixed-outcome-report counts, the grain-masking analysis — came from explicit pandas code written to answer a specific question, not from reading values out of the profiling HTML. The profiling report is a fast, generic first look; it doesn't replace, and wasn't used to produce, the targeted checks.
+
+### 3.7 Save *(executed)*
+ 
+Each of the seven datasets — cast, derived, checked, profiled — is saved to **its own** Parquet file:
+
