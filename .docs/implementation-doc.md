@@ -1,13 +1,15 @@
+# EC-1062 — Implementation Plan
+
 ## 1. Environment and Repo
 
 | Item | Detail |
 |---|---|
 | Python | 3.11 |
-| Env | venv + requirements.txt (Docker can also be used) |
-| Notebooks | Jupyter Lab — data exploration *only* |
+| Env | venv + requirements.txt (Docker is also an option) |
+| Notebooks | Jupyter Lab. Use for data exploration only. |
 | Version control | Git |
 
-### Libraries — and exactly where each is used
+### Libraries — and Where We Use Each One
 
 | Library | Purpose | Section |
 |---|---|---|
@@ -18,13 +20,13 @@
 | scikit-learn | LogisticRegression, CalibratedClassifierCV, metrics | §6, §7 |
 | LightGBM | Coverage-ceiling benchmark | §7 |
 | SHAP | LightGBM attributions | §7 |
-| pytest | Tests — especially leakage | §5 |
+| pytest | Tests. Leakage tests are the priority. | §5 |
 | google-generativeai | Gemini, comparison arm | §8 |
 | pyarrow | Parquet I/O between stages | §3 |
 
-Each stage writes Parquet to `data/`. Any stage can be re-run without redoing the one before it.
+Each stage writes Parquet files to `data/`. We can re-run any stage without redoing the stage before it.
 
-### Repo
+### Repo Structure
 
 ```
 ec1062/
@@ -32,7 +34,7 @@ ec1062/
   tests/         reports/       requirements.txt
 ```
 
-`src/` is importable and tested. Notebooks import from `src/`, never redefine logic.
+`src/` holds importable, tested code. Notebooks import from `src/`. Notebooks must not redefine logic that lives in `src/`.
 
 ---
 
@@ -49,21 +51,20 @@ SQL extract → load & type → profile → clean → outlier policy
 
 ### 3.1 What We Pull
 
-TBP with Vinay Parida.
-Update §3.2, §3.3 later.
+To be confirmed with Vinay Parida. We will update §3.2 and §3.3 later.
 
 ### 3.2 Collapsing Workflow Steps Into One Label
 
 A claim has many workflow rows. We need one outcome per claim.
 
-Rejections terminate the chain — approved means every level said yes; rejected means the first objector said no. We model the first veto.
+Rejection ends the chain. Approved means every level agreed. Rejected means the first reviewer who objected said no. We model this first objection, not the full chain.
 
 ### 3.3 Load With Explicit Types
 
-Never let pandas infer.
+Do not let pandas guess column types.
 
-- `bill_number` inferred as `int64` silently drops leading zeros and breaks duplicate detection. So we make it a string.
-- `errors="coerce"` turns unparseable dates into `NaT` instead of throwing — we then count them, rather than discovering them later.
+- If pandas infers `bill_number` as `int64`, it drops leading zeros. This breaks duplicate detection. We load `bill_number` as a string instead.
+- We parse dates with `errors="coerce"`. This turns a bad date into `NaT` instead of stopping the program. We then count how many dates failed, instead of finding out later.
 
 ### 3.4 Profile the Raw Data
 
@@ -72,63 +73,61 @@ from ydata_profiling import ProfileReport
 ProfileReport(df, minimal=True).to_file("reports/raw_profile.html")
 ```
 
-Understanding what the data looks like before doing anything with it.
+We look at the data before we change it.
 
-**What we're looking for, and what a bad answer costs:**
+**What we check, and the cost of a bad result:**
 
-| Check | If it's bad |
+| Check | Cost if the result is bad |
 |---|---|
-| `bill_number` null rate | Duplicate detection dies |
-| `bill_date` null rate | `submit_lag` feature dies |
-| category cardinality | Free-text categories → no per-category thresholds |
-| amount distribution | Currency/unit inconsistency |
-| Claims per employee | If most have <3, almost nothing is eligible to score |
+| `bill_number` null rate | Duplicate detection stops working |
+| `bill_date` null rate | The `submit_lag` feature stops working |
+| Category cardinality | Free-text categories block per-category thresholds |
+| Amount distribution | May reveal currency or unit mismatches |
+| Claims per employee | If most employees have under 3 claims, almost nothing is eligible to score |
 
-List all the possible features and their weights.
+We list every candidate feature and its weight.
 
 ---
 
-## 4. Outliers — And Why We Do NOT Remove Them
+## 4. Outliers — Why We Do Not Remove Them
 
-Can be part of low-weighted features. We should not drop outliers.
+An outlier can be a low-weight feature. We do not drop outliers.
 
-Standard EDA says drop outliers. Here that would destroy the feature.
+Standard exploratory analysis removes outliers. Here, that removal would destroy the feature we need. An unusual claim is exactly the signal we want to detect. A ₹9,000 food claim from someone who always claims ₹800 is not noise. It is the signal.
 
-An anomalous claim is exactly what we're trying to detect. A ₹9,000 Food claim from someone who always claims ₹800 isn't noise to be cleaned — it's the signal.
+**Rule: we never remove outliers from the dataset.**
 
-**So: no outlier removal from the dataset. Ever.**
+### Outliers Must Not Damage the Profile
 
-### But Outliers Must Not Poison the Profile
-
-There is a real problem. If Ravi's history is `[800, 800, 820, 9000, 800]`:
+There is a real risk here. Take an employee, Ravi, with claim history `[800, 800, 820, 9000, 800]`.
 
 ```
 mean = 2,244    std = 3,668
 ```
 
-His profile is now garbage. Every future claim looks "normal" against a mean of ₹2,244 with an enormous spread. One freak claim destroys his tolerance band forever.
+This profile is now wrong. Every future claim looks normal against a mean of ₹2,244 and a spread of ₹3,668. One unusual claim breaks Ravi's tolerance band for good.
 
-### The Policy — Two Different Treatments
+### Our Policy Has Two Separate Rules
 
-| Context | Treatment |
+| Situation | Rule |
 |---|---|
-| The claim being scored | Never clipped, never dropped. Score it as it is. |
-| A claim's contribution to profile statistics | Robust statistics — resistant to a single extreme value |
+| The claim we are scoring right now | We never clip it and never drop it. We score it as it is. |
+| A claim's contribution to the profile statistics | We use robust statistics. One extreme value must not distort the result. |
 
-Median and MAD instead of mean and std. One ₹9,000 claim moves the median by nothing and the MAD by nothing. Ravi's band stays tight — which is correct — and next month's ₹850 claim still scores well.
+We use median and MAD (median absolute deviation) instead of mean and standard deviation. One ₹9,000 claim barely moves the median or the MAD. Ravi's band stays tight, which is correct. His next ₹850 claim still scores well.
 
-**Detecting outliers for the report only:** Used to answer "how common are out-of-pattern claims?" in the exploration report. Never used to filter.
+**We use outlier counts for the report only.** We use them to answer "how common are unusual claims?" in the exploration report. We never use them to filter data.
 
 ### Tests
 
-- `test_future_claims_do_not_affect_past_features` — If this fails, every number in the report is wrong. Runs on every commit.
-- **Split**: Train on months 1..N, test on N+1..
+- `test_future_claims_do_not_affect_past_features`. If this test fails, every number in the report is wrong. This test runs on every commit.
+- **Split:** We train on months 1 to N. We test on month N+1 onward.
 
 ---
 
 ## 6. Profiles, Features, Scorers
 
-### Profile → can add more into this
+### Profile — We Can Add More Fields Later
 
 ```python
 @dataclass
@@ -143,44 +142,44 @@ class Profile:
     months_claiming: float
 ```
 
-`cv` is the load-bearing feature. It separates a Ravi (₹800 every time, tight) from a Priya (₹600–₹1,400, wide), and it's what lets the tolerance band adapt per person.
+`cv` is the most important feature in the profile. It tells the difference between Ravi, who always claims ₹800, and Priya, whose claims range from ₹600 to ₹1,400. `cv` lets the tolerance band adjust for each person.
 
-### Feature Vector → TBD
+### Feature Vector — Still to Be Decided
 
 | Feature | Definition |
 |---|---|
-| `n_prior_approved` | from profile |
+| `n_prior_approved` | from the profile |
 | `amount_z` | `(amount - centre) / spread` |
-| `cv` | from profile |
+| `cv` | from the profile |
 | `pct_of_policy_limit` | `amount / policy_limit` |
 | `rhythm_z` | `(days_since_last - median_gap) / median_gap` |
 | `submit_lag_days` | `submitted_at - bill_date` |
-| `submit_lag_z` | vs. their own usual lag |
+| `submit_lag_z` | deviation from the employee's own usual lag |
 | `months_claiming` | tenure in this category |
-| `bill_number_missing` | bool |
+| `bill_number_missing` | boolean |
 
-Category-specific vs. global approval rate — as a way to distinguish an individual's pattern from general behaviour.
+We can also compare the category-specific approval rate against the global approval rate. This helps us tell an individual's normal pattern apart from general company behaviour.
 
-### Guardrails — Inside the Scorer, Evaluated First
+### Guardrails — Inside the Scorer, Checked First
 
-(Nothing but a threshold for this feature to work → assigning less weight.)
+A guardrail is a threshold. It does not use weights.
 
-Hard caps, not weights. A -30 penalty could be outvoted by a strong pattern and auto-approve a duplicate. A cap cannot.
+A weighted penalty can be outvoted. A -30 point penalty can still lose to a strong pattern and let a duplicate claim through. A guardrail is a hard cap. It cannot be outvoted.
 
 ```python
 def apply_guardrails(claim, profile) -> int | None:
-    if profile.n_prior_approved < MIN_PRIOR:   return 0      # ineligible
+    if profile.n_prior_approved < MIN_PRIOR:   return 0      # not eligible
     if profile.months_claiming  < MIN_TENURE:  return 0
     if duplicate_same_period(claim):           return 0
     if claimed_by_other_employee(claim):       return 0
     if profile.prior_rejection:                return CAP_REJECTED   # 40
     if claim.amount > ABS_CEILING:              return CAP_LARGE      # 40
-    return None      # no override — proceed to scoring
+    return None      # no guardrail applies — send to the scorer
 
 
 def duplicate_same_period(claim) -> bool:
     return exists(bill_number == claim.bill_number
-                  and bill_period == claim.bill_period)   # ← period, not just number
+                  and bill_period == claim.bill_period)   # period, not just the number
 ```
 
 ### Three Scorers
@@ -191,13 +190,13 @@ def score(claim: Claim, profile: Profile) -> tuple[int, list[str]]
 
 | Module | Band |
 |---|---|
-| `rule.py` | fixed ±20% of centre |
-| `stddev.py` | scaled by their own MAD |
+| `rule.py` | fixed band, ±20% of the centre |
+| `stddev.py` | band scaled by the employee's own MAD |
 | `learned.py` | logistic regression |
 
 ```python
 # rule.py --> pseudocode
-in_band = abs(amount - centre) <= 0.20 * centre  # (certain amount in certain range)
+in_band = abs(amount - centre) <= 0.20 * centre  # amount falls in a fixed range
 score   = 90 if (n_prior >= 3 and in_band) else 30
 
 # stddev.py
@@ -210,9 +209,9 @@ model = CalibratedClassifierCV(
 )
 ```
 
-Calibration makes the output a real probability: "70" means "70% of claims like this were approved unchanged" — which survives a model version bump. ~8 features, because every coefficient has to be explainable to a finance admin.
+Calibration turns the output into a real probability. A score of 70 means: 70% of similar past claims were approved without change. This meaning stays stable even when we update the model. We keep the feature count near 8. Every coefficient must be explainable to a finance admin.
 
-### Reasons — Templates → Need to Decide Accordingly
+### Reasons — Template Text, Still to Be Finalised
 
 ```python
 TEMPLATES = {
@@ -222,57 +221,57 @@ TEMPLATES = {
 }
 ```
 
-Faithful by construction — same numbers, same weights that produced the score. A guardrail hit bypasses the templates and emits a fixed string: `"Duplicate: bill 4471 already claimed for June 2026."`
+Each reason comes directly from the numbers and weights that produced the score. A guardrail hit skips the templates. It shows a fixed message instead: `"Duplicate: bill 4471 already claimed for June 2026."`
 
 ---
 
 ## 7. Evaluation
 
-**We are not optimising for accuracy.**
+**We do not optimise for accuracy.**
 
-A one-off hospital bill was approved — so a model scoring it 92 is accurate, and it's exactly the claim we don't want auto-approved. A more accurate model would be a worse product.
+A hospital bill was approved once. A model that scores it 92 is accurate — but this is exactly the claim we do not want auto-approved. A more accurate model here would be a worse product.
 
 | Metric | Definition |
 |---|---|
 | Coverage | `n_auto_approved / n_manual_queue` |
 | Leakage (count) | share of auto-approved claims a human would have rejected |
-| Leakage (value) | same, weighted by rupee amount |
-| Abstention | of claims with no precedent, share correctly left alone. High is good, and it costs accuracy on purpose. |
+| Leakage (value) | same measure, weighted by rupee amount |
+| Abstention | of claims with no prior history, the share we correctly leave alone. A high value is good here, even though it costs accuracy. |
 
 ### Threshold Sweep
 
-This table is the answer to "60 or 70?" — here's what each choice costs; pick your risk appetite.
+This table answers the question "60 or 70?". It shows the cost of each choice, so the team can pick the risk level it wants.
 
-Bootstrap CIs on leakage. If rejections are rare, a leakage figure rests on very few claims — and finance will treat a precise number as a promise.
+We compute bootstrap confidence intervals on leakage. If rejections are rare, a leakage number rests on very few claims. Finance may read a precise number as a promise. A confidence interval shows the real uncertainty.
 
-- **Bootstrap** = A statistical technique where you repeatedly sample your data (with replacement) to estimate how stable your results are.
-- **CI** = Confidence Interval, which gives a range instead of a single number.
+- **Bootstrap:** a method that resamples the data, with replacement, many times, to show how stable a result is.
+- **CI (Confidence Interval):** a range of values, instead of one single number.
 
 ### LightGBM — Coverage Ceiling
 
-One question: how much more of the queue could a stronger model automate at the same leakage rate?
+This answers one question: how much more of the queue could a stronger model handle, at the same leakage rate?
 
 ```python
 LGBMClassifier(random_state=42, n_estimators=200)
 # → CalibratedClassifierCV → same threshold sweep
 ```
 
-Not necessarily needed.
+This step is not required.
 
 ---
 
 ## 8. LLM Comparison
 
-> After all of the above is executed, then we can compare it with LLM.
+Run this after every step above is complete and working.
 
-Gemini, structured JSON, one claim per call. Prompt carries the claim plus that employee's history (the most a prompt can hold).
+We use Gemini. We request structured JSON output. We send one claim per call. The prompt carries the claim plus that employee's history — as much history as fits in the prompt.
 
-1. **Determinism** — 100 claims × 10 runs. Count score changes, report the spread. Run first; it's cheap.
-2. **Calibration** — bucket its scores; were claims it scored 70 approved ~70% of the time?
-3. **Corpus blindness** — seed the test set with duplicate-bill cases. A prompt holds one employee's history; it cannot hold 40,000 claims across the company. Failures should cluster here.
-4. **Head-to-head** — same sweep, same table, one chart.
+1. **Determinism.** Run 100 claims through the model, 10 times each. Count how many scores change. This test is cheap. Run it first.
+2. **Calibration.** Group the model's scores into buckets. Check: were claims scored near 70 actually approved about 70% of the time?
+3. **Corpus blindness.** Add duplicate-bill cases to the test set. A prompt holds one employee's history. It cannot hold 40,000 claims across the company. We expect failures to cluster here.
+4. **Head-to-head.** Run the same threshold sweep. Build the same table and chart as the other scorers.
 
-Report the numbers either way.
+We report the numbers either way, even if they do not support our expectation.
 
 ---
 
@@ -292,17 +291,17 @@ Score: 0   →  MANUAL REVIEW
 
 ---
 
-## 10. End-to-End Walkthrough (Input → Output)
+## 10. End-to-End Walkthrough (Input to Output)
 
-*The full flow once the data arrives.*
+*This shows the full flow once the data arrives.*
 
 ### Stage 1 — Extraction
 
-Train and Test split: 80-20 or 70-30 → depends on data.
+Train and test split: 80-20 or 70-30. The right split depends on data volume.
 
-**Input:** SQL/CSV extract from data (claims + workflow).
+**Input:** SQL or CSV extract (claims plus workflow data).
 **Libraries:** pandas, pyarrow, ydata-profiling, matplotlib.
-**Output:** one clean claims table + a data-quality report.
+**Output:** one clean claims table, plus a data-quality report.
 
 ```python
 load claims.csv and workflow.csv          # pandas.read_csv / read_parquet
@@ -314,15 +313,15 @@ save → data/claims_clean.parquet
 ```
 
 **Deliverables:**
-- Category breakdown — which categories exist, volume each.
-- What a "normal" employee looks like — median claims, median amount, typical rhythm. We need to experiment with all the types.
+- A category breakdown: which categories exist, and the claim volume in each.
+- A description of a normal employee: median claims, median amount, typical rhythm. We test this across every category.
 
 ### Stage 2 — Profiles
 
 **Input:** `claims_clean.parquet`.
 **Libraries:** pandas, numpy.
-**Output:** a Profile per (employee, category).
-**Key idea:** the profile is a query, not a model — pure aggregation over that person's own past claims.
+**Output:** one Profile per (employee, category) pair.
+**Key idea:** a profile is a query result, not a model. It is a plain aggregation of that person's own past claims.
 
 ```python
 for each (employee, category) group:            # pandas groupby
@@ -339,10 +338,10 @@ for each (employee, category) group:            # pandas groupby
 
 ### Stage 3 — Feature Engineering
 
-**Input:** each claim + its employee's profile.
+**Input:** each claim, joined to its employee's profile.
 **Libraries:** pandas, numpy.
 **Output:** one feature row per claim.
-**Note:** same pass as profiles — for each claim, look up the profile, compute the deltas.
+**Note:** this runs in the same pass as profile building. For each claim, we look up the profile and compute the deltas.
 
 ```python
 for each claim:
@@ -357,14 +356,14 @@ save → data/features.parquet
 ```
 
 **Deliverables:**
-- Discuss features + weights (this will be done once data is available).
-- Final feature table.
+- A discussion of the features and their weights. We do this once the data is available.
+- The final feature table.
 
 ### Stage 4 — Scoring
 
-**Input:** feature table.
+**Input:** the feature table.
 **Libraries:** scikit-learn (LogisticRegression, CalibratedClassifierCV).
-**Output:** score 0–100 + reasons per claim.
+**Output:** a score from 0 to 100, plus reasons, for each claim.
 
 ```python
 for each claim:
@@ -381,9 +380,9 @@ for each claim:
 
 ### Stage 5 — Evaluation
 
-**Input:** scored test set (time-split from training).
+**Input:** the scored test set, split by time from the training set.
 **Libraries:** scikit-learn (metrics), matplotlib, numpy (bootstrap).
-**Output:** the threshold table — the deliverable that answers "60 or 70?".
+**Output:** the threshold table. This table answers "60 or 70?".
 
 ```python
 for scorer in [rule, stddev, learned]:
@@ -393,10 +392,10 @@ bootstrap CIs on leakage                         # numpy resampling
 → reports/threshold_table.csv + curves
 ```
 
-### Later (Separate Tasks)
+### Later — Separate Tasks
 
-- **LLM benchmarking** — Gemini, once the above runs end-to-end.
-- **Attachment reading** — Gemini bill extraction via S3 API. Enhancement only; test-env bills are mock data.
+- **LLM benchmarking.** We use Gemini, once the stages above run end-to-end.
+- **Attachment reading.** Gemini reads bills through an S3 API. This is an enhancement only. Test-environment bills are mock data, not real bills.
 
 ### Library Summary
 
@@ -410,43 +409,52 @@ bootstrap CIs on leakage                         # numpy resampling
 | LLM (later) | google-generativeai |
 
 ---
+
 ## ACTUAL IMPLEMENTATION
 
-All work below runs against seven synthetic datasets, not real claims. Six form a policy × company-size grid — three approval strictness levels (strict / regular / lenient) crossed with three company sizes (SBU 10 employees / MBU 25 / LBU 50) — plus a seventh, regular_mbu_highvolume, a deliberately dense stress case (75 employees, 5-year history) built to test the pipeline under far deeper per-employee precedent than a normal-sized company produces. All seven share one 47-column schema, matching the real extraction query and data dictionary.
+All work below uses seven synthetic datasets.
 
-## 3. Stage 1 — Extraction & Preparation
+6 datasets form a grid. Three approval strictness levels — strict, regular, lenient — cross with three company sizes: SBU (10 employees), MBU (25 employees), LBU (50 employees).
 
-### 3.1 Source
+The seventh dataset, `regular_mbu_highvolume`, is a stress test. It has 25 employees, an 18-month history like the other six, but a higher claim volume per employee. This tests the pipeline under much deeper per-employee history than a normal-sized company produces.
 
-The SQL and data dictionary are provided. One row per claim item, definitive outcomes only, claims that went through ≥1 reviewer level.
+All seven datasets share one 45-column schema. This schema matches the real extraction query and data dictionary, with two changes: it removes `expense_category_name` and `expense_type_name`, and it adds `expense_type_id`.
 
-### 3.2 The Label — Already on the Row
+### Stage 1 — Extraction and Preparation
 
-`item_status` is the item-level outcome. No collapse needed.
+#### 1.1 Source
 
-| Label | From | Meaning |
+SQL query and the data dictionary. The grain is one row per claim item. Every row has a final outcome. Every claim passed through at least one reviewer level.
+
+#### 1.2 The Label — Already Present on Each Row
+
+`item_status` gives the outcome for each item. We do not need to collapse multiple rows into one label.
+
+| Label | Source | Meaning |
 |---|---|---|
-| Positive | `item_status ∈ {Accepted, Paid}` | approved (Paid is downstream of Accepted — same outcome) |
+| Positive | `item_status ∈ {Accepted, Paid}` | approved. `Paid` always follows `Accepted`. We treat them as the same outcome. |
 | Negative | `item_status = Rejected` | rejected |
 
-Two refinements the schema forces:
+The schema forces two refinements:
 
-- `auto_approved = TRUE` → the report bypassed human review by rule. These are precedent, not scoring targets. Keep them for building profiles; exclude them from the "needs a score" population.
-- `override_count > 0` → a reviewer changed the amount before accepting. That is not a clean approval. Only clean approvals (`override_count = 0`) count toward precedent. *(I don't think we need to think about it.)*
+- `auto_approved = TRUE` means the system approved the report by rule, with no human reviewer. These claims count as history for the profile. They do not count as a scoring target, because no reviewer judged them.
+- `override_count > 0` means a reviewer changed the amount before accepting the claim. This is not a clean approval. Only claims with `override_count = 0` count toward the employee's history.
 
-**Casing trap** (from the dictionary): `item_status` is Title-case (`Accepted`); `report_status` is ALL-CAPS (`ACCEPTED`). Never reuse one filter list on both. We use `item_status`.
+**Casing trap.** The data dictionary flags this directly. `item_status` uses title case, for example `Accepted`. `report_status` uses all capitals, for example `ACCEPTED`. We must not apply one filter list to both columns. We use `item_status` throughout.
 
-### 3.3 Load With Explicit Types
+#### 1.3 Load With Explicit Types
 
-| Column | Cast | Why |
+| Column | Cast | Reason |
 |---|---|---|
-| `bill_number` | string | `int64` drops leading zeros → breaks any bill matching |
-| `expense_category_code` | category | grouping key, low cardinality |
-| `bill_date`, `submission_date`, `approval_date`, `rejection_date`, `last_overridden_at` | datetime, `errors="coerce"` | bad dates → `NaT`, counted not thrown |
-| `employee_id` | int | selected twice in the SQL (item + report) → in the CSV export this surfaces as `employee_id-2`, confirmed identical to `employee_id`; dropped |
+| `bill_number` | string | If pandas infers `int64`, it drops leading zeros. This breaks bill matching. |
+| `expense_category_code` | category | This is a grouping key with low cardinality. |
+| `bill_date`, `submission_date`, `approval_date`, `rejection_date`, `item_created_on`, `item_updated_on` | datetime, `errors="coerce"` | A bad date becomes `NaT` instead of stopping the program. We then count how many dates failed. |
+| `expense_type_id` | integer (Int64) | This is the new type identifier. It replaces the removed `expense_type_name` column. |
 
-### 3.4 Derived fields
-Beyond the label, four more fields computed once per dataset:
+
+#### 1.4 Derived Fields
+
+We compute five extra fields once per dataset, beyond the label:
 
 ```python
 df["submit_lag_days"] = (df["submission_date"] - df["bill_date"]).dt.days
@@ -459,31 +467,41 @@ df["is_clean_approval"] = (
 )
 ```
 
-### 3.5 Structural checks *(added during implementation — not in the original plan)*
- 
-Two checks were added once the seven-dataset structure existed.
+We also add `is_rejected` as an explicit column, alongside `is_approved`. We do not leave rejection as an implied opposite of approval. We add one check:
 
-**Multi-item report safety.** For every dataset, checked whether any report contains items with different outcomes (some accepted, some rejected within the same report). Confirmed real across all seven — each dataset has 90–120+ reports with mixed outcomes — which is what makes per-item labelling safe: a rejection on one item does not blanket the others in the same report.
+```python
+assert (df["is_approved"] | df["is_rejected"]).all(), \
+    "found item_status values outside {Accepted, Paid, Rejected}"
+```
 
+This check confirms that every row has one of the three expected outcomes. If the check fails, an unexpected value has entered the data, and we must find it before we trust any label downstream.
+
+#### 1.5 Structural Checks
+
+We added two checks once the seven-dataset structure existed. The original plan did not include them.
+
+**Multi-item report safety.** For every dataset, we check whether any report contains items with different outcomes — some accepted, some rejected, inside the same report. We confirmed this is real across all seven datasets. Each dataset has 90 to 120 or more reports with mixed outcomes. This confirms that per-item labelling is safe. A rejection on one item does not spread to the other items in the same report.
+
+**Eligibility at two grains, side by side.** We compute eligible pairs at the type level and at the category level, in the same check. We do not compute the category level alone, because our profile grain is `type`, not `category`. Reporting only the category number would validate the wrong grain.
 
 ```python
 pairs_type = clean.groupby(
-    ["employee_id", "expense_category_code", "expense_type_name"], observed=True
+    ["employee_id", "expense_category_code", "expense_type_id"], observed=True
 ).size()
 pairs_cat = clean.groupby(
     ["employee_id", "expense_category_code"], observed=True
 ).size()
 ```
- 
-Also added: a `CATEGORY_NAMES` lookup built dynamically from the data itself (never hardcoded, so it can't drift out of sync) so eligibility tables show `MED (Medical)` rather than a bare code.
 
-### 3.6 Data profiling — `ydata-profiling` *(executed)*
- 
-Run once cast (§3.3) and derived fields (§3.4) existed, so the report covers everything — not raw strings.
- 
+We do not rebuild a category-name or type-name lookup table for these reports. The current schema removes both name columns to keep the data free of names. Reports show the code and the numeric type ID only.
+
+#### 1.6 Data Profiling — `ydata-profiling`
+
+We run this step after casting (§3.3) and after adding the derived fields (§1.4). This way, the report covers the complete data, not the raw strings.
+
 ```python
 from ydata_profiling import ProfileReport
- 
+
 profile = ProfileReport(
     combined, minimal=True,
     title="EC-1062 Synthetic Claims — All Seven Datasets"
@@ -491,17 +509,45 @@ profile = ProfileReport(
 profile.to_file("reports/synthetic_all_seven_profile.html")
 ```
 
-**One combined report** (all seven, tagged by `dataset`) plus **one dedicated deep-dive** on `regular_mbu_highvolume` specifically, given its size and depth relative to the other six:
- 
+We produce one combined report, tagged by dataset, plus one dedicated report for `regular_mbu_highvolume`, given its size:
+
 ```python
 ProfileReport(FINAL["regular_mbu_highvolume"], minimal=True,
               title="regular_mbu_highvolume").to_file(
     "reports/regular_mbu_highvolume_profile.html")
 ```
 
-*What this step is for, and what it isn't.** `ydata-profiling` produces a browsable HTML report — null rates, cardinality, distribution shapes, per-column summaries — meant for a human to skim and catch something obviously wrong (a column that's mostly empty, a category that's dominating unexpectedly) before building anything on top of the data. **It is not the source of any specific finding documented in this project.** Every quantitative result reported elsewhere — the eligibility rates in §3.5, the mixed-outcome-report counts, the grain-masking analysis — came from explicit pandas code written to answer a specific question, not from reading values out of the profiling HTML. The profiling report is a fast, generic first look; it doesn't replace, and wasn't used to produce, the targeted checks.
+**What this step does, and what it does not do.** `ydata-profiling` builds a browsable HTML report: null rates, cardinality, distribution shapes, and per-column summaries. A person uses this report to catch an obvious problem — a column that is mostly empty, or a category with unexpected dominance — before we build anything on top of the data.
 
-### 3.7 Save *(executed)*
- 
-Each of the seven datasets — cast, derived, checked, profiled — is saved to **its own** Parquet file:
+This report is not the source of any specific finding in this project. Every number reported elsewhere — the eligibility rates in §3.5, the mixed-outcome report counts, the grain-masking analysis — comes from targeted pandas code, written to answer one specific question. None of it comes from reading values out of the profiling report. The profiling report gives a fast, general first look. It does not replace the targeted checks, and we did not use it to produce them.
 
+#### 1.7 Save
+
+We cast, derive, check, and profile each of the seven datasets. We then save each one to its own Parquet file:
+
+```
+data/interim/claims_strict_mbu_typed.parquet
+data/interim/claims_regular_sbu_typed.parquet
+...
+data/interim/claims_regular_mbu_highvolume_typed.parquet
+```
+
+**We never merge these into one file.** `employee_id` restarts at 1000 in every dataset. Each dataset represents a separate synthetic company. We build one combined, tagged frame, but only for cross-dataset comparison and for the single profiling report above. We never use this combined frame as input to any grouping or profile logic, because `employee_id` alone is not a unique key across it.
+
+#### Stage 2 — Profile Building
+
+We built and ran the profile-building code, `src/profiles.py`, against all seven datasets. We verified the output.
+
+**Profile grain is fixed at `type`.** The config setting `PROFILE_GRAIN` must always read `"type"`. It must never read `"category"`. A category groups several expense types together, and those types can have very different typical amounts. Grouping at the category level can hide a real deviation behind a larger, unrelated type in the same category. We tested this directly and confirmed the effect. See the grain finding in the dataset reference document for the full evidence.
+
+**Profiles save to one file per dataset,** in `data/interim/profiles/`, following the same rule as §3.7. We never merge profiles across datasets.
+
+Each profile row holds:
+
+- `n_prior_approved` — a count, taken only from clean approvals for this exact employee, category, and type.
+- `centre`, `spread`, `cv` — computed with median and MAD, per §4 above.
+- `median_gap_days` — the employee's usual rhythm for this type.
+- `months_claiming` — tenure in this type.
+- `prior_rejection` — a boolean. This checks the employee's full history, including rejected claims, not just the clean approvals used for the other statistics.
+
+`MIN_PRIOR_APPROVALS = 3` applies at the same grain as the profile: one employee, one category, one type. A claim in a new type does not benefit from the employee's history in a different type, even inside the same category.
