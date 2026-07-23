@@ -52,6 +52,7 @@ These feed the model. Each contributes a weighted signal — none of them can fo
 ## 5. Percent of Policy Limit
 - **5.1** How close is this amount to the category's configured limit?
 - Not the same question as Feature 2. An amount can be normal for the employee and still sit right under the policy ceiling — that pattern is worth surfacing on its own.
+- Example: the limit is 2000, but the person is claiming 1800 alredy for the first claim for that month. This can be other indication, but not have much effect in scoring.
 
 ## 6. Tenure in This Type
 - **6.1** How long has this employee been claiming this exact type?
@@ -63,13 +64,13 @@ These feed the model. Each contributes a weighted signal — none of them can fo
 
 ---
 
-## Guardrails(we can say, but during scoring itself we will keep these in find).
+## Guardrails(we can say, but during scoring itself we will keep these in find). (Threshold)
 
-These are hard caps, not scored features. A guardrail is checked before scoring runs. If one fires, it sets the score directly and no weighted feature can override it.
+These are hard caps, not scored features. A guardrail is checked before scoring runs. If one fires, it sets the score directly and no weighted feature can override it. This also can be added directly into the scoring system, but it is prefered to be put separate before scoring.
 
 ## G1. Duplicate Bill
-- **G1.1** Is this bill number, or a near-identical one, already claimed by this employee in the same billing period — or by a different employee at all?
-- **If yes: score is capped at 0.** *(Corrected from the original draft, which had this backwards — a duplicate must never score highly, regardless of how well it otherwise matches the employee's pattern.)*
+- **G1.1** Is this bill number, or a near-identical one, already claimed by this employee in the same billing period — or by a different employee at all(if we are gonna compare with other employees)?
+- **If yes: score is capped at 0.** *(a duplicate must never score highly, regardless of how well it otherwise matches the employee's pattern.)*
 
 ## G2. Insufficient History
 - **G2.1** Does this employee have fewer than the minimum required prior approvals in this exact type?
