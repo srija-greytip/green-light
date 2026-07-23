@@ -36,9 +36,9 @@ Every feature must answer one specific question. If a feature cannot be written 
 These feed the model. Each contributes a weighted signal — none of them can force a decision on its own.
 
 ## 1. Amount vs Type Median
-- **1.1** Is this amount high compared to what everyone claims for this type, company-wide?
+- **1.1** Is this amount high compared to what everyone claims for this type, company-wide? -->one way to think
 - **Caution:** this is a population-level comparison, not personal. It must only ever *lower* a score, never raise one. A claim with no personal history must not score well just because the amount is typical for other people. Using this to raise a score recreates the exact risk we ruled out earlier — a model that learns "this type is usually fine" and auto-approves a genuinely novel claim.
-
+- **1.2** Is this amount high compared to what the persons history. -->other way
 ## 2. Amount vs My Own History
 - **2.1** Is this amount high for this specific employee, in this specific type?
 - This is the core feature. It is the one the whole score is built around.
@@ -57,13 +57,13 @@ These feed the model. Each contributes a weighted signal — none of them can fo
 - **6.1** How long has this employee been claiming this exact type?
 - This does not judge the claim. It judges how much we should trust the profile the claim is being judged against. A one-month-old profile and a two-year-old profile should not carry equal weight, even if both currently show 3 prior approvals.
 
-## 7. Mileage Rate Consistency *(mileage claims only)*
+## 7. Mileage Rate Consistency *(mileage claims only)* -->should be handeled separately.
 - **7.1** Does the claimed rate per unit match this employee's usual rate for this type?
 - The schema stores `mileage_original_rate_per_unit` specifically to catch rate manipulation. This feature uses that field directly.
 
 ---
 
-## Guardrails
+## Guardrails(we can say, but during scoring itself we will keep these in find).
 
 These are hard caps, not scored features. A guardrail is checked before scoring runs. If one fires, it sets the score directly and no weighted feature can override it.
 
