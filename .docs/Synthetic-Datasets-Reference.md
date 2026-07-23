@@ -16,8 +16,7 @@
 
 **Lenient at SBU** — Highly permissive approach at SBU. Most claims are approved regardless of their alignment with claimant history, echoing the lenient pattern at LBU, with approvals having low informational value about claim sensibility.
 
-**Regular at MBU, high volume**  Same policy and headcount tier as Regular MBU, and the **same 18-month window as every other dataset**. Volume comes entirely from behaviour, not from a longer timeline: employees are active in 7–12 categories/types instead of 3–5, and claim roughly twice as often. Policy limits are also 2.25× the standard, reflecting a more generous company. Built to test the pipeline under much deeper per-employee history than a normal-sized company produces, without changing the one variable (time) that would make it a different kind of comparison.
----
+**Regular at MBU, high volume** —  This dataset uses the same policy and headcount tier as the Regular MBU dataset and spans the same 18-month time window as all the other datasets. The increased volume comes entirely from employee behavior, not from a longer timeline. Employees are active across 7–12 expense categories/types instead of 3–5, and they submit claims at approximately twice the frequency. Policy limits are also 2.25× higher than the standard, reflecting a more generous reimbursement policy. This dataset is designed to test the pipeline with significantly richer per-employee historical data while keeping the timeline constant, ensuring that the comparison isolates the effect of higher claim volume rather than longer observation periods.
 
 ## 1. Shared structure
 
