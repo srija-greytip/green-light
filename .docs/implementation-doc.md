@@ -534,20 +534,42 @@ data/interim/claims_regular_mbu_highvolume_typed.parquet
 
 **We never merge these into one file.** `employee_id` restarts at 1000 in every dataset. Each dataset represents a separate synthetic company. We build one combined, tagged frame, but only for cross-dataset comparison and for the single profiling report above. We never use this combined frame as input to any grouping or profile logic, because `employee_id` alone is not a unique key across it.
 
-#### Stage 2 — Profile Building
-
-We built and ran the profile-building code, `src/profiles.py`, against all seven datasets. We verified the output.
-
-**Profile grain is fixed at `type`.** The config setting `PROFILE_GRAIN` must always read `"type"`. It must never read `"category"`. A category groups several expense types together, and those types can have very different typical amounts. Grouping at the category level can hide a real deviation behind a larger, unrelated type in the same category. We tested this directly and confirmed the effect. See the grain finding in the dataset reference document for the full evidence.
-
-**Profiles save to one file per dataset,** in `data/interim/profiles/`, following the same rule as §3.7. We never merge profiles across datasets.
-
-Each profile row holds:
-
-- `n_prior_approved` — a count, taken only from clean approvals for this exact employee, category, and type.
-- `centre`, `spread`, `cv` — computed with median and MAD, per §4 above.
-- `median_gap_days` — the employee's usual rhythm for this type.
-- `months_claiming` — tenure in this type.
-- `prior_rejection` — a boolean. This checks the employee's full history, including rejected claims, not just the clean approvals used for the other statistics.
-
-`MIN_PRIOR_APPROVALS = 3` applies at the same grain as the profile: one employee, one category, one type. A claim in a new type does not benefit from the employee's history in a different type, even inside the same category.
+### Stage 2 — Pattern Extraction
+We build one pattern row for each employee and each expense type. The code lives in src/patterns.py. One row describes one employee's normal behaviour for one expense type.
+ 
+We measure four groups of numbers.
+ 
+Group 1, amount. The usual claim amount, and how much it varies.
+Group 2, rhythm. How often the employee claims this type.
+Group 3, timing. How long after the bill date the employee usually submits.
+Group 4, outcome. How many claims were rejected, out of the total claims of this type.
+ 
+We use median and MAD for every measurement in groups 1 to 3. MAD means median absolute deviation. Median and MAD resist one unusual claim. A single large claim cannot distort the pattern.
+ 
+We set a floor on every spread value. A spread can never read as smaller than 5% of its centre value. This floor stops a divide-by-zero error for an employee whose amounts show almost no variation.
+ 
+We build groups 1 to 3 only from clean approvals. A clean approval is a claim a human approved, with no change to the amount. We do not use auto-approved claims or overridden claims for these three groups, because no human judged the amount as normal in those cases. Group 4, outcome, uses all claims of the type, including rejected ones, because a rejection is itself part of the outcome record.
+ 
+We label each pattern row with one plain word: too_few, new, unknown, steady, moderate, or inconsistent. This label helps a person read the output quickly. The scoring logic does not use this label.
+ 
+We add one eligibility check, is_eligible. This check reads two numbers from the pattern row. The employee must have at least 3 clean approvals of this type. The employee must have at least 1 month of history for this type. Both conditions must pass. If either number is too low, the pattern is not ready to use.
+ 
+We run this code on all seven datasets. We save one output file per dataset, for example outputs/patterns_regular_mbu_highvolume.csv. We do not merge the seven output files into one. Each dataset represents a separate company, and employee IDs repeat across datasets.
+ 
+### Stage 3 — Feature Building
+We turn each claim into three numbers, using its own pattern from Stage 2. The code lives in src/features.py. One row in the output describes one claim.
+ 
+We compute three numbers for each claim.
+ 
+amount_z. How far the claim amount sits from the employee's usual amount, measured in units of the employee's own spread.
+frequency_delta. How far the gap since the employee's last claim of this type sits from the employee's usual gap.
+submit_lag_z. How far the time between the bill date and the submission date sits from the employee's usual lag.
+ 
+All three numbers use the same method. We take the actual value. We subtract the employee's centre value. We divide the result by the employee's spread value. A result near zero means the claim matches the pattern. A large result, positive or negative, means the claim sits far from the pattern.
+ 
+We apply one rule to the frequency number. We look only at claims that happened before the current claim's own date. We never use a later claim to judge an earlier one. This rule stops the feature from using information that would not exist yet at the real decision time.
+ 
+Each claim also carries a has_pattern flag. This flag is true only when the employee passes the is_eligible check for this exact category and type. When the flag is false, all three numbers are empty. An empty result means the claim has no pattern to compare against yet, and the claim must go to manual review for this reason alone.
+ 
+We run this code on all seven datasets. We save one output file per dataset, for example outputs/features_regular_mbu_highvolume.csv. One run on the regular_mbu_highvolume dataset produced 194 pattern rows from 5,130 claims, and 5,130 feature rows, one row for every claim in the dataset.
+ 
