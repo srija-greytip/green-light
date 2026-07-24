@@ -119,7 +119,7 @@ df = load_and_prepare("data/raw/claims_regular_mbu_highvolume.csv")
 patterns = extract_patterns(df)
 
 print(patterns)
-patterns.to_csv("outputs/patterns_regular_mbu_highvolume.csv", index=False)  # Save to file
+patterns.to_csv("outputs/patterns_regular_mbu_highvolume.csv", index=False)
 
 def is_eligible(pattern_row, min_claims=3, min_months=1) -> bool:
     return (pattern_row["n_clean_approved"] >= min_claims
