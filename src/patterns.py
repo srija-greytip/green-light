@@ -23,7 +23,7 @@ def _classify(n_claims, amount_cv, gap_centre, months_active) -> str:
         return "steady"
     if amount_cv < 0.30:
         return "moderate" 
-    return "erratic"
+    return "inconsistent"
 
 def extract_patterns(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
